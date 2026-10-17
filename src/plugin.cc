@@ -118,7 +118,30 @@ AVPixelFormat pick_pixel_format(const HwDevice* device, const AVPixelFormat* for
 
 AVPixelFormat choose_pixel_format(AVCodecContext* ctx, const AVPixelFormat* formats)
 {
-  AVPixelFormat chosen = pick_pixel_format(static_cast<const HwDevice*>(ctx->opaque), formats);
+  const auto* device = static_cast<const HwDevice*>(ctx->opaque);
+  AVPixelFormat chosen = pick_pixel_format(device, formats);
+
+  // FFmpeg's hevc decoder labels full-range 8-bit 4:2:0 streams yuvj420p, an old pixel format that
+  // only differs from yuv420p in its range flag. Most hwaccels ask for an nv12 GPU frame pool
+  // regardless, but VDPAU asks for one in the stream's format, and VDPAU's frame pools reject
+  // yuvj420p, which would leave every full-range photo to software. For that case only, the plugin
+  // creates the pool itself in yuv420p: same samples, and the range still reaches the decoded frame
+  // from the stream, which is where attach_nclx() reads it.
+  if (chosen == device->hw_pix_fmt && ctx->sw_pix_fmt == AV_PIX_FMT_YUVJ420P) {
+    AVBufferRef* frames = nullptr;
+    if (avcodec_get_hw_frames_parameters(ctx, ctx->hw_device_ctx, chosen, &frames) >= 0) {
+      auto* frames_ctx = reinterpret_cast<AVHWFramesContext*>(frames->data);
+      if (frames_ctx->sw_format == AV_PIX_FMT_YUVJ420P) {
+        frames_ctx->sw_format = AV_PIX_FMT_YUV420P;
+        if (av_hwframe_ctx_init(frames) >= 0) {
+          av_buffer_unref(&ctx->hw_frames_ctx);
+          ctx->hw_frames_ctx = av_buffer_ref(frames);
+          hwdec::debug_log("get_format: GPU frame pool created in yuv420p for the yuvj420p stream");
+        }
+      }
+      av_buffer_unref(&frames);
+    }
+  }
 
   if (hwdec::debug_enabled()) {
     std::string offered;
