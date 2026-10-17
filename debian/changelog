@@ -1,3 +1,12 @@
+libheif-hwdec (0.1.1-1) UNRELEASED; urgency=medium
+
+  * Decode in software when the GPU hands back a frame in a format too narrow
+    for the stream, as nvidia-vaapi-driver does with 10- and 12-bit 4:4:4.
+  * Skip nvidia-vaapi-driver's egl backend when probing VAAPI devices: its
+    decodes never finish.
+
+ -- Marian Kadanka <marian@kadanka.net>  Sat, 17 Oct 2026 21:44:28 +0200
+
 libheif-hwdec (0.1.0-1) UNRELEASED; urgency=medium
 
   * Initial release.

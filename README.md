@@ -147,7 +147,7 @@ Debian and Ubuntu:
 ```sh
 sudo apt install debhelper devscripts
 dpkg-buildpackage -b -us -uc
-sudo apt install ../libheif-plugin-hwdec_0.1.0-1_amd64.deb
+sudo apt install ../libheif-plugin-hwdec_0.1.1-1_amd64.deb
 ```
 
 Fedora and openSUSE, from a release tarball:

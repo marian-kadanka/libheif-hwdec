@@ -4,7 +4,7 @@
 #   rpmbuild -ba packaging/rpm/libheif-hwdec.spec   with the release tarball in SOURCES
 
 Name:           libheif-hwdec
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        GPU-accelerated HEVC and AV1 decoder plugin for libheif
 License:        LGPL-3.0-or-later
@@ -79,5 +79,11 @@ find %{buildroot} -name libheif-hwdec.so | sed 's|^%{buildroot}||' > plugin.file
 %doc README.md
 
 %changelog
+* Sat Oct 17 2026 Marian Kadanka <marian@kadanka.net> - 0.1.1-1
+- Decode in software when the GPU hands back a frame in a format too narrow
+  for the stream, as nvidia-vaapi-driver does with 10- and 12-bit 4:4:4
+- Skip nvidia-vaapi-driver's egl backend when probing VAAPI devices: its
+  decodes never finish
+
 * Sat Oct 17 2026 Marian Kadanka <marian@kadanka.net> - 0.1.0-1
 - Initial package
