@@ -58,6 +58,38 @@ Tested with libheif 1.17.6, 1.19.8, 1.20.2, 1.21.2, 1.22.2 and 1.23.6, and FFmpe
 
 ## Pre-built packages
 
+### From a package repository
+
+A repository also brings updates with the rest of the system.
+
+Ubuntu 24.04 and 26.04, from the [PPA](https://launchpad.net/~marian.kadanka/+archive/ubuntu/libheif-hwdec):
+
+```sh
+sudo add-apt-repository ppa:marian.kadanka/libheif-hwdec
+sudo apt install libheif-plugin-hwdec
+```
+
+openSUSE Tumbleweed and Leap 16.0, Fedora 44 and Rawhide, from the
+[openSUSE Build Service](https://build.opensuse.org/package/show/home:marian.kadanka/libheif-hwdec).
+For openSUSE Leap 16.0 use `16.0` in place of `openSUSE_Tumbleweed`; for Fedora Rawhide use
+`Fedora_Rawhide` in place of `Fedora_44`:
+
+```sh
+# openSUSE
+sudo zypper addrepo https://download.opensuse.org/repositories/home:marian.kadanka/openSUSE_Tumbleweed/home:marian.kadanka.repo
+sudo zypper refresh
+sudo zypper install libheif-hwdec
+
+# Fedora
+sudo dnf config-manager addrepo --from-repofile=https://download.opensuse.org/repositories/home:marian.kadanka/Fedora_44/home:marian.kadanka.repo
+sudo dnf install libheif-hwdec
+```
+
+Restart any image viewer that was already open. See [Distribution notes](#distribution-notes) for
+the FFmpeg and driver packages each distribution needs before the GPU is used.
+
+### From a GitHub release
+
 Every [release](https://github.com/marian-kadanka/libheif-hwdec/releases) has a package for each of
 these distributions, built by `.github/workflows/packages.yml` against that distribution's libheif
 and FFmpeg:
