@@ -399,6 +399,9 @@ private:
 
   bool take_frame(const std::vector<Packet>& packets, DecodedFrame& out, std::string& error)
   {
+    // `out` may hold a frame from an earlier attempt on the GPU.
+    out.on_gpu = false;
+    out.download_ms = 0;
     // sw_pix_fmt is the format the stream decodes to in software, so its depth is the coded one.
     if (const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(ctx_->sw_pix_fmt)) {
       out.bit_depth = desc->comp[0].depth;
@@ -583,15 +586,37 @@ heif_error decode_next_unguarded(Decoder* decoder, heif_image** out_image, uintp
     return out_of_memory();
   }
 
+  heif_image* image = nullptr;
+  std::chrono::steady_clock::time_point copy_start;
   for (;;) {
     Stream::Result result = decoder->stream->next_frame(decoder->packets, decoder->flushed, decoded, error);
     if (result == Stream::Result::need_data || result == Stream::Result::end) {
       return success();
     }
     if (result == Stream::Result::frame) {
-      break;
+      copy_start = std::chrono::steady_clock::now();
+      heif_error err = hwdec::copy_frame_to_heif_image(decoded.frame, decoded.bit_depth,
+                                                       limits ? limits : decoder->limits, &image);
+      if (err.code == heif_error_Ok) {
+        err = attach_nclx(decoded.frame, image, decoder->strict);
+        if (err.code != heif_error_Ok) {
+          heif_image_release(image);
+          image = nullptr;
+        }
+      }
+      if (err.code == heif_error_Ok) {
+        break;
+      }
+      if (!decoded.on_gpu) {
+        return err;
+      }
+      // The GPU can hand back a frame in a format that can't hold the stream's samples, for
+      // example a 10-bit 4:4:4 stream downloaded into an 8-bit format. That counts as a failed
+      // GPU decode: the picture is decoded again in software.
+      error = std::string(err.message) + ", frame format " +
+              av_get_pix_fmt_name(AVPixelFormat(decoded.frame->format));
     }
-    if (!decoder->stream->on_gpu()) {
+    else if (!decoder->stream->on_gpu()) {
       return decoder_error(error);
     }
     hwdec::debug_log("GPU decoding failed (%s), decoding again in software", error.c_str());
@@ -599,21 +624,6 @@ heif_error decode_next_unguarded(Decoder* decoder, heif_image** out_image, uintp
     if (!open_stream(decoder, false, error)) {
       return decoder_error(error);
     }
-  }
-
-  const auto copy_start = std::chrono::steady_clock::now();
-  heif_image* image = nullptr;
-  heif_error err = hwdec::copy_frame_to_heif_image(decoded.frame, decoded.bit_depth,
-                                                   limits ? limits : decoder->limits, &image);
-  if (err.code == heif_error_Ok) {
-    err = attach_nclx(decoded.frame, image, decoder->strict);
-    if (err.code != heif_error_Ok) {
-      heif_image_release(image);
-      image = nullptr;
-    }
-  }
-  if (err.code != heif_error_Ok) {
-    return err;
   }
 
   hwdec::debug_log("decoded %dx%d %s on %s, frame format %s, open %.1f ms, decode %.1f ms, download %.1f ms, "
