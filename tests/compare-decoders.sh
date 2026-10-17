@@ -19,11 +19,18 @@ plugin_dir=$2
 backend=$3
 shift 3
 
-system_plugins=$("$bench" --plugin-dir)
-export LIBHEIF_PLUGIN_PATH="$plugin_dir:$system_plugins"
-
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+
+# libheif's own decoders come from its plugin directory, linked into a directory of their own
+# without libheif-hwdec.so: with an installed copy of this plugin on the path as well, libheif
+# would load that one, and the test would compare the installed plugin instead of the build.
+system_plugins=$("$bench" --plugin-dir)
+mkdir "$work/plugins"
+for p in "$system_plugins"/*.so; do
+  [ -e "$p" ] && [ "$(basename "$p")" != libheif-hwdec.so ] && ln -s "$p" "$work/plugins/"
+done
+export LIBHEIF_PLUGIN_PATH="$plugin_dir:$work/plugins"
 
 # The plugin only claims AV1 where its probe decode succeeds on the GPU; elsewhere the AVIF files
 # are left out instead of letting libheif quietly use its own AV1 decoder.
