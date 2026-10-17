@@ -1,0 +1,7 @@
+/* libheif looks up only plugin_info; everything else stays private to the plugin. */
+{
+  global:
+    plugin_info;
+  local:
+    *;
+};

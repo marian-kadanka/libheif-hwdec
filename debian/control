@@ -1,0 +1,33 @@
+Source: libheif-hwdec
+Section: libs
+Priority: optional
+Maintainer: Marian Kadanka <marian@kadanka.net>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.16),
+               pkgconf,
+               libheif-dev (>= 1.15),
+               libavcodec-dev,
+               libavutil-dev,
+               libva-dev,
+               libvulkan-dev
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: libheif-plugin-hwdec
+Architecture: any
+Multi-Arch: same
+Depends: ${hwdec:libheif}, ${misc:Depends}, ${shlibs:Depends}
+Recommends: va-driver-all | va-driver
+Suggests: intel-media-va-driver-non-free
+Enhances: libheif1
+Description: GPU-accelerated HEVC and AV1 decoder plugin for libheif
+ Decodes HEIC (HEVC) and AVIF (AV1) images on the GPU through FFmpeg's
+ hardware acceleration API, using VAAPI (Intel, AMD, and NVIDIA with
+ nvidia-vaapi-driver), CUDA/NVDEC (NVIDIA) or Vulkan Video. Every program that
+ reads HEIC or AVIF files through libheif uses it once the package is
+ installed, including image viewers that use KDE's Qt image format plugins,
+ such as Gwenview.
+ .
+ When no suitable GPU is present the plugin steps aside and libheif keeps
+ using its usual HEVC decoder. Streams the GPU cannot decode are decoded in
+ software by FFmpeg.

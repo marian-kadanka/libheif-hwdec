@@ -1,0 +1,10 @@
+/build/
+/obj-*/
+/debian/.debhelper/
+/debian/libheif-plugin-hwdec/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.substvars
+/debian/*.debhelper.log
+/build-asan/
+__pycache__/

@@ -1,0 +1,251 @@
+# libheif-hwdec
+
+A [libheif](https://github.com/strukturag/libheif) decoder plugin that decodes HEIC (HEVC) and
+AVIF (AV1) images on the GPU through FFmpeg's hardware acceleration API.
+
+libheif loads it from its plugin directory, so every program that reads these formats through
+the system's libheif picks it up without being rebuilt: `heif-dec`, and image viewers that use
+KDE's Qt image format plugins (`kimageformats`), such as Gwenview.
+
+| backend  | GPUs                                                                                 |
+|----------|--------------------------------------------------------------------------------------|
+| `vaapi`  | Intel and AMD (Mesa), NVIDIA with [nvidia-vaapi-driver](https://github.com/elFarto/nvidia-vaapi-driver) |
+| `cuda`   | NVIDIA, through NVDEC                                                                |
+| `vulkan` | any GPU whose Vulkan driver exposes video decoding (opt-in, see [Configuration](#configuration)) |
+
+## How it works
+
+libheif creates one decoder per coded picture: one for a plain image, one per tile for a grid
+image (phones store a 12–50 megapixel photo as dozens of 512×512 or 1024×1024 tiles), one for an
+alpha plane. The plugin turns the data libheif pushes into FFmpeg packets, decodes them with
+FFmpeg's `hevc` or `av1` decoder bound to a GPU device, and copies each frame from GPU memory into
+libheif's planes.
+
+- **One device per process.** The GPU is opened on first use and kept until the process exits.
+  The plugin is linked with `-z nodelete`, so it stays loaded when libheif unloads its plugins,
+  which KDE's HEIF image plugin causes after every image it reads.
+- **Contexts are reused.** Initialised FFmpeg contexts are pooled and reused for pictures with
+  identical sequence parameters (HEVC VPS/SPS/PPS, AV1 sequence header), so NVDEC's per-context
+  setup is paid once per worker thread instead of once per tile.
+- **Software fallback.** If the GPU cannot decode a stream (unsupported profile, chroma format,
+  bit depth or size, or a driver error), the plugin decodes it again with FFmpeg in software:
+  `hevc` for HEIC, `libdav1d` or `libaom-av1` for AVIF.
+- **Stepping aside.** The plugin declines a format, and libheif uses its regular decoders
+  (libde265, dav1d, aom), when there is no usable GPU device, when this FFmpeg lacks the decoders
+  the plugin needs (Fedora's `ffmpeg-free` has no `hevc`), or, for AV1, when a tiny AV1 picture
+  built into the plugin does not decode on the GPU. Drivers that list AV1 decoding can still fail
+  on every stream; that probe runs once per process, the first time an AVIF file is opened.
+
+libheif picks the decoder with the highest priority. The plugin reports 110 for HEVC, above
+libde265's 100, and 160 for AV1, above dav1d's 150.
+
+## Compatibility
+
+libheif's plugin interface has changed over time, and libheif 1.21 and later refuse plugins built
+for an interface version below 5. The build detects what the libheif headers offer and builds for
+that version, which also decides the libheif releases the binary works with:
+
+| built against libheif | plugin API | loads with libheif | package dependency (`.deb` and `.rpm`) |
+|-----------------------|-----------:|--------------------|----------------------------------------|
+| 1.15 – 1.19           | 3          | 1.15 – 1.20        | `>= 1.15`, `< 1.21`                    |
+| 1.20                  | 4          | 1.20               | `>= 1.20`, `< 1.21`                    |
+| 1.21                  | 5          | 1.21 and later     | `>= 1.21`                              |
+| 1.22 and later        | 6          | 1.22 and later     | `>= 1.22`                              |
+
+Tested with libheif 1.17.6, 1.19.8, 1.20.2, 1.21.2, 1.22.2 and 1.23.6, and FFmpeg 6.1, 7.1, 8.0,
+8.1 and 9.0. The plugin links FFmpeg by its library versions (`libavcodec.so.60` for FFmpeg 6,
+`.62` for 8 and so on), so a binary also belongs to one FFmpeg major version.
+
+## Pre-built packages
+
+Every [release](https://github.com/marian-kadanka/libheif-hwdec/releases) has a package for each of
+these distributions, built by `.github/workflows/packages.yml` against that distribution's libheif
+and FFmpeg:
+
+| distribution        | file                                                   | install with |
+|---------------------|--------------------------------------------------------|--------------|
+| Ubuntu 24.04        | `libheif-plugin-hwdec_<version>-1+ubuntu24.04_amd64.deb` | `sudo apt install ./<file>` |
+| Ubuntu 26.04        | `libheif-plugin-hwdec_<version>-1+ubuntu26.04_amd64.deb` | `sudo apt install ./<file>` |
+| Debian 13           | `libheif-plugin-hwdec_<version>-1+debian13_amd64.deb`    | `sudo apt install ./<file>` |
+| Debian testing      | `libheif-plugin-hwdec_<version>-1+debiantesting_amd64.deb` | `sudo apt install ./<file>` |
+| Fedora 44           | `libheif-hwdec-<version>-1.fc44.x86_64.rpm`              | `sudo dnf install ./<file>` |
+| openSUSE Tumbleweed | `libheif-hwdec-<version>-1.suse.tumbleweed.x86_64.rpm`   | `sudo zypper install ./<file>` |
+| Arch                | `libheif-hwdec-<version>-1-x86_64.pkg.tar.zst`           | `sudo pacman -U <file>` |
+
+A package only works with the libheif and FFmpeg major versions of the release it was built for.
+See [Distribution notes](#distribution-notes) for the driver and FFmpeg packages each distribution
+needs before the GPU is used. `packaging/ci/build-package.sh` builds any of these packages locally,
+in a container of the distribution.
+
+## Requirements
+
+- libheif ≥ 1.15, built with plugin loading
+- FFmpeg (`libavcodec`, `libavutil`) with the `hevc` decoder, and for AVIF with the `av1` decoder
+  and `libdav1d` or `libaom-av1`
+- libva for the `vaapi` backend, the Vulkan headers to build the `vulkan` backend's device
+  selection
+- A GPU driver that decodes HEVC, see [Distribution notes](#distribution-notes)
+
+## Building
+
+```sh
+sudo apt install cmake pkgconf libheif-dev libavcodec-dev libavutil-dev libva-dev libvulkan-dev
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build
+```
+
+CMake prints the plugin API version it chose and the directory the plugin installs into, which
+it asks libheif for: `/usr/lib/x86_64-linux-gnu/libheif/plugins` on Debian and Ubuntu,
+`/usr/lib64/libheif` on Fedora, `/usr/libexec/libheif` on openSUSE, `/usr/lib/libheif` on Arch.
+Set `HWDEC_PLUGIN_DIR` to override it.
+
+Try it without installing. `LIBHEIF_PLUGIN_PATH` replaces libheif's built-in plugin directory, so
+list both:
+
+```sh
+export LIBHEIF_PLUGIN_PATH=$PWD/build:/usr/lib/x86_64-linux-gnu/libheif/plugins
+heif-dec --list-decoders        # "hwdec" should be listed first under HEIC decoders
+LIBHEIF_HWDEC_DEBUG=1 heif-dec image.heic image.png
+```
+
+## Installing
+
+Debian and Ubuntu:
+
+```sh
+sudo apt install debhelper devscripts
+dpkg-buildpackage -b -us -uc
+sudo apt install ../libheif-plugin-hwdec_0.1.0-1_amd64.deb
+```
+
+Fedora and openSUSE, from a release tarball:
+
+```sh
+rpmbuild -ba packaging/rpm/libheif-hwdec.spec
+```
+
+Or directly:
+
+```sh
+sudo cmake --install build
+```
+
+## Distribution notes
+
+Distributions leave patented codecs out of their main repositories, in the GPU drivers as well as
+in FFmpeg and libheif. The plugin needs an FFmpeg with the `hevc` decoder and a driver that
+decodes HEVC (and AV1, for AVIF); without them it steps aside and nothing changes.
+
+| distribution | FFmpeg with `hevc` | Intel VAAPI driver with HEVC and AV1 | libde265 for libheif |
+|--------------|--------------------|--------------------------------------|----------------------|
+| Debian       | main               | `intel-media-va-driver-non-free` (non-free); the main `intel-media-va-driver` has no AV1 | `libheif-plugin-libde265` |
+| Ubuntu       | main               | `intel-media-va-driver-non-free` (multiverse); the main package has no AV1 | `libheif-plugin-libde265` |
+| Fedora       | `ffmpeg` from RPM Fusion; Fedora's `ffmpeg-free` has none | `intel-media-driver` from RPM Fusion nonfree; Fedora's `libva-intel-media-driver` has no HEVC | `libheif-freeworld` from RPM Fusion |
+| openSUSE     | main               | `intel-media-driver`                 | `libheif-HEIF` from Packman |
+| Arch         | main               | `intel-media-driver`                 | built into `libheif` |
+
+AV1 decoding on Intel GPUs also needs a recent driver: version 24.1 (Ubuntu 24.04) fails on every
+AV1 stream with any FFmpeg version, 26.1 and later decode it.
+
+## Configuration
+
+Environment variables, read once per process:
+
+| variable                | effect                                                                   |
+|-------------------------|--------------------------------------------------------------------------|
+| `LIBHEIF_HWDEC=0`       | disable the plugin; libheif uses its regular decoders                    |
+| `LIBHEIF_HWDEC_BACKEND` | comma-separated backends to try in order: `vaapi`, `cuda`, `vulkan`; default `vaapi,cuda` |
+| `LIBHEIF_HWDEC_DEVICE`  | DRM render node for `vaapi` (`/dev/dri/renderD129`), device index for `cuda` and `vulkan` |
+| `LIBHEIF_HWDEC_DEBUG=1` | log, with the process ID, the chosen device, the AV1 probe, each picture's path (GPU or CPU), format and timings, and FFmpeg's errors |
+
+Without `LIBHEIF_HWDEC_DEVICE`:
+
+- `vaapi` probes every `/dev/dri/renderD*` node and takes the first whose driver can decode HEVC
+  Main. NVIDIA nodes are probed last, so on a laptop with integrated graphics and an NVIDIA GPU the
+  NVIDIA GPU is not woken up.
+- `vulkan` takes the first Vulkan device with an H.265 video decode queue. It is not in the default
+  list because setting it up took 700–850 ms on an NVIDIA T1200, against 3 ms for VAAPI on an Intel
+  GPU. Mesa's Intel driver (ANV) exposes video decoding only with `ANV_DEBUG=video-decode`, at least
+  up to Mesa 26.2.
+
+Applications can also choose the decoder per call: set `decoder_id = "hwdec"` (or `"libde265"`)
+in `heif_decoding_options`, or use `heif-dec -d hwdec`.
+
+## What runs on the GPU
+
+Measured on an Intel Alder Lake-P iGPU (VAAPI) and an NVIDIA T1200 (NVDEC), using the files in
+`tests/data/`:
+
+| stream                                                     | Intel, VAAPI | NVIDIA, CUDA |
+|------------------------------------------------------------|--------------|--------------|
+| HEVC 8-bit 4:2:0 (Main, Main Still Picture)                | GPU          | GPU          |
+| HEVC 10/12-bit 4:2:0 (Main 10, Main 12)                    | GPU          | GPU          |
+| HEVC 4:2:2 10/12-bit (Main 4:2:2 10/12)                    | GPU          | software     |
+| HEVC 4:4:4 8/10/12-bit (Main 4:4:4 ...)                    | GPU          | GPU          |
+| HEVC 10/12-bit, 4:2:2 or 4:4:4 with a Range Extensions *Intra* profile | software | as above |
+| HEVC monochrome, including alpha planes                    | software     | software     |
+| HEVC pictures under 144 pixels high, or over 8192 wide or high | GPU      | software     |
+| HEVC pictures over 16384 pixels wide or high               | software     | software     |
+| AV1 Main profile 4:2:0 8/10-bit (driver 26.1 or later)     | GPU          | not supported by the T1200 |
+| AV1 4:4:4 (High profile), AV1 monochrome                   | software     | —            |
+
+- **Intra profiles:** libheif's own x265 encoder (`heif-enc`) writes 10/12-bit, 4:2:2 and 4:4:4
+  images with Range Extensions *Intra* profiles, which FFmpeg's VAAPI code has no mapping for.
+- **Monochrome:** FFmpeg offers no hwaccel for monochrome HEVC.
+- **Output is identical either way:** every test compares the decoded samples with libde265 or
+  dav1d.
+
+## Performance
+
+218 photos (9248×6936, 70 tiles of 1024×1024 each), decoded one after another in one process with
+`heif-hwdec-bench` (no colour conversion), with version 0.1.0:
+
+| decoder                    | median per photo | total   |
+|----------------------------|-----------------:|--------:|
+| libde265 (software)        | 815 ms           | 188.5 s |
+| hwdec, Intel iGPU (VAAPI)  | 348 ms           | 56.5 s  |
+| hwdec, NVIDIA T1200 (CUDA) | 352 ms           | 63.3 s  |
+
+The `cuda` backend takes 250–700 ms to set up CUDA the first time it is used in a process. Image
+viewers and KDE's thumbnail workers are long-running processes and pay it once; one-shot
+`heif-dec` runs pay it every time.
+
+## Testing
+
+```sh
+cd build && ctest --output-on-failure
+```
+
+- `annexb`, `av1_obu`, `frame_copy`: unit tests, no GPU needed. `frame_copy` checks the
+  conversion of 27 FFmpeg pixel formats, including every format FFmpeg downloads GPU frames into,
+  with and without cropping.
+- `compare_vaapi`, `compare_cuda`, `compare_vulkan` (label `gpu`): decode the files in
+  `tests/data/` with the plugin and with a reference decoder (libde265 for HEIC, dav1d or aom for
+  AVIF), and fail on any difference in size, decoded samples or colour profile, or if no picture
+  was decoded on the GPU. A backend without a device, or a missing reference decoder, skips the
+  test; AVIF files are left out where the plugin does not claim AV1.
+
+`tests/make-fixtures.sh` regenerates `tests/data/` with ImageMagick, `heif-enc`, `ffmpeg`, `x265`
+and GPAC's `MP4Box`.
+
+`tests/fuzz-files.py` corrupts the test files and decodes each one in a separate process, keeping
+every case that crashes, trips a sanitizer or hangs. Build with
+`-DCMAKE_CXX_FLAGS="-fsanitize=address,undefined"` for the sanitizer checks:
+
+```sh
+python3 tests/fuzz-files.py build/tests/heif-hwdec-bench build vaapi 2000 fuzz-out tests/data/*.heic tests/data/*.avif
+```
+
+`build/tests/heif-hwdec-bench` decodes files in one process and prints, per file, the time and a
+hash of the decoded planes, for benchmarking and for comparing decoders on your own images:
+
+```sh
+build/tests/heif-hwdec-bench -d libde265 *.heic > a.txt
+build/tests/heif-hwdec-bench -d hwdec *.heic > b.txt
+```
+
+## License
+
+(c) Marian Kadanka, https://kadanka.net/
+
+LGPL-3.0-or-later, the same as libheif. See `COPYING.LESSER` and `COPYING`.

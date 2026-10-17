@@ -1,0 +1,34 @@
+# Arch Linux package for libheif-hwdec.
+#   makepkg -si      in this directory, builds from the GitHub release tarball
+
+pkgname=libheif-hwdec
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='GPU-accelerated HEVC and AV1 decoder plugin for libheif'
+arch=('x86_64')
+url='https://github.com/marian-kadanka/libheif-hwdec'
+license=('LGPL-3.0-or-later')
+# Arch ships the newest libheif, so the plugin is built for plugin API 6, which needs libheif 1.22.
+depends=('libheif>=1.22' 'ffmpeg' 'libva' 'gcc-libs' 'glibc')
+makedepends=('cmake' 'vulkan-headers')
+optdepends=('intel-media-driver: VAAPI decoding on Intel GPUs'
+            'libva-mesa-driver: VAAPI decoding on AMD GPUs'
+            'nvidia-utils: NVDEC decoding on NVIDIA GPUs')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S "$pkgname-$pkgver" -B build -DCMAKE_BUILD_TYPE=None -DCMAKE_INSTALL_PREFIX=/usr \
+    -DHWDEC_BUILD_TESTS=ON
+  cmake --build build
+}
+
+check() {
+  # The tests labelled "gpu" compare against libde265 on a real GPU and are skipped without one.
+  ctest --test-dir build --output-on-failure --label-exclude gpu
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "$pkgname-$pkgver/README.md" -t "$pkgdir/usr/share/doc/$pkgname"
+}
