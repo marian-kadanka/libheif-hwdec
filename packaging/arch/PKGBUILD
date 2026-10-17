@@ -9,10 +9,10 @@ arch=('x86_64')
 url='https://github.com/marian-kadanka/libheif-hwdec'
 license=('LGPL-3.0-or-later')
 # Arch ships the newest libheif, so the plugin is built for plugin API 6, which needs libheif 1.22.
-depends=('libheif>=1.22' 'ffmpeg' 'libva' 'gcc-libs' 'glibc')
+depends=('libheif>=1.22' 'ffmpeg' 'libva' 'libgcc' 'libstdc++' 'glibc')
 makedepends=('cmake' 'vulkan-headers')
 optdepends=('intel-media-driver: VAAPI decoding on Intel GPUs'
-            'libva-mesa-driver: VAAPI decoding on AMD GPUs'
+            'mesa: VAAPI decoding on AMD GPUs'
             'nvidia-utils: NVDEC decoding on NVIDIA GPUs')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
