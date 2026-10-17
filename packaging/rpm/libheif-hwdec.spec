@@ -72,7 +72,7 @@ find %{buildroot} -name libheif-hwdec.so | sed 's|^%{buildroot}||' > plugin.file
 
 %check
 # The tests labelled "gpu" compare against libde265 on a real GPU and are skipped in a build root.
-%ctest -- --label-exclude gpu
+%ctest --label-exclude gpu
 
 %files -f plugin.files
 %license COPYING COPYING.LESSER
