@@ -64,7 +64,8 @@ case "$distro" in
       dnf -y -q builddep "$src/packaging/rpm/libheif-hwdec.spec" > /dev/null
       dist=$(rpm --eval '%{?dist}')
     else
-      zypper -n -q install rpm-build tar gzip > /dev/null
+      # gawk first: git pulls in busybox-gawk, which conflicts with the gawk rpm-build needs.
+      zypper -n -q install gawk rpm-build tar gzip > /dev/null
       rpmspec -q --buildrequires "$src/packaging/rpm/libheif-hwdec.spec" | xargs -d '\n' zypper -n -q install > /dev/null
       dist=".${distro/opensuse-/suse.}"
     fi

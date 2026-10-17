@@ -40,7 +40,7 @@ jobs:
         run: |
           if command -v apt-get > /dev/null; then apt-get update -qq && apt-get install -y -qq git ca-certificates
           elif command -v dnf > /dev/null; then dnf -y -q install git
-          elif command -v zypper > /dev/null; then zypper -n -q install git tar gzip
+          elif command -v zypper > /dev/null; then zypper -n -q install git gawk tar gzip
           elif command -v pacman > /dev/null; then pacman -Sy --noconfirm --needed git
           fi
       - uses: actions/checkout@v4
