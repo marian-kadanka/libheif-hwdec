@@ -184,6 +184,17 @@ bool open_vaapi(const char* requested_device, HwDevice& out)
       av_buffer_unref(&ref);
       continue;
     }
+    // nvidia-vaapi-driver runs NVIDIA GPUs through VAAPI. Its "egl" backend never returns from
+    // vaSyncSurface after a decode, so every image would hang; it is the default in version 0.0.8,
+    // the one Ubuntu 24.04 ships. The "direct" backend works, and is the default from 0.0.14 on.
+    // Without an explicit LIBHEIF_HWDEC_DEVICE the egl backend is skipped, and the cuda backend
+    // reaches the same GPU.
+    if (!requested_device && vaapi_vendor_string(ref).find("NVDEC driver [egl backend]") != std::string::npos) {
+      debug_log("vaapi: skipping %s (%s): its decodes hang; nvidia-vaapi-driver 0.0.14 and later default to "
+                "the working direct backend", path.c_str(), vaapi_vendor_string(ref).c_str());
+      av_buffer_unref(&ref);
+      continue;
+    }
 
     out.device_ref = ref;
     out.type = AV_HWDEVICE_TYPE_VAAPI;

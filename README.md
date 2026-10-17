@@ -9,7 +9,7 @@ KDE's Qt image format plugins (`kimageformats`), such as Gwenview.
 
 | backend  | GPUs                                                                                 |
 |----------|--------------------------------------------------------------------------------------|
-| `vaapi`  | Intel and AMD (Mesa), NVIDIA with [nvidia-vaapi-driver](https://github.com/elFarto/nvidia-vaapi-driver) |
+| `vaapi`  | Intel and AMD (Mesa), NVIDIA with [nvidia-vaapi-driver](https://github.com/elFarto/nvidia-vaapi-driver) 0.0.14 or later (see [Configuration](#configuration)) |
 | `cuda`   | NVIDIA, through NVDEC                                                                |
 | `vulkan` | any GPU whose Vulkan driver exposes video decoding (opt-in, see [Configuration](#configuration)) |
 
@@ -195,6 +195,13 @@ Without `LIBHEIF_HWDEC_DEVICE`:
 - `vaapi` probes every `/dev/dri/renderD*` node and takes the first whose driver can decode HEVC
   Main. NVIDIA nodes are probed last, so on a laptop with integrated graphics and an NVIDIA GPU the
   NVIDIA GPU is not woken up.
+- `vaapi` skips nvidia-vaapi-driver when it runs its "egl" backend: decodes through it never
+  finish, so every image would hang. That is the default backend of version 0.0.8, the one Ubuntu
+  24.04 ships, and its "direct" backend fails to start. Versions 0.0.14 and later default to the
+  "direct" backend, which works. Measured on an NVIDIA T1200 with 0.0.14 and 0.0.18, it
+  decodes as fast as the `cuda` backend from the second image in a process, but the first image
+  takes about 170 ms longer, because the driver's own setup is slower. Where both are available,
+  the `cuda` backend (`LIBHEIF_HWDEC_BACKEND=cuda`) is the better choice for NVIDIA GPUs.
 - `vulkan` takes the first Vulkan device with an H.265 video decode queue. It is not in the default
   list because setting it up took 700–850 ms on an NVIDIA T1200, against 3 ms for VAAPI on an Intel
   GPU. Mesa's Intel driver (ANV) exposes video decoding only with `ANV_DEBUG=video-decode`, at least
