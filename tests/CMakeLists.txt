@@ -16,7 +16,7 @@ add_test(NAME frame_copy COMMAND test_frame_copy)
 # End-to-end comparison against libde265 on the files in tests/data/, once per GPU backend.
 # Labelled "gpu": they need a GPU and are skipped (exit code 77) when it is missing.
 file(GLOB HWDEC_TEST_FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/*.heic" "${CMAKE_CURRENT_SOURCE_DIR}/data/*.avif")
-foreach(backend vaapi cuda vulkan)
+foreach(backend vaapi vdpau cuda vulkan)
   add_test(NAME compare_${backend}
            COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/compare-decoders.sh" $<TARGET_FILE:heif-hwdec-bench>
                    $<TARGET_FILE_DIR:heif-hwdec> ${backend} ${HWDEC_TEST_FILES})

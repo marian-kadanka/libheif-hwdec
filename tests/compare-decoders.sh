@@ -7,7 +7,7 @@
 # Usage: compare-decoders.sh BENCH PLUGIN_DIR BACKEND FILE...
 #   BENCH       the heif-hwdec-bench program
 #   PLUGIN_DIR  directory holding the built libheif-hwdec.so
-#   BACKEND     vaapi or cuda (sets LIBHEIF_HWDEC_BACKEND)
+#   BACKEND     vaapi, vdpau, cuda or vulkan (sets LIBHEIF_HWDEC_BACKEND)
 #
 # Skips when a reference decoder is not installed, or when the backend has no usable device: libheif
 # then quietly decodes with its regular decoder even if hwdec is requested, which would compare the

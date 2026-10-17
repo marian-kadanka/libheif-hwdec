@@ -99,10 +99,11 @@ std::string ffmpeg_error(const char* what, int ret)
 
 // FFmpeg get_format callback. It is offered the GPU pixel format first when the hwaccel supports
 // the stream's profile and chroma format; anything else gets the software format. If initialising
-// the hwaccel fails, FFmpeg drops the GPU format from the list and calls this again.
-AVPixelFormat pick_pixel_format(const HwDevice* device, const AVPixelFormat* formats)
+// the hwaccel fails, FFmpeg drops the GPU format from the list and calls this again. With
+// allow_gpu false it always takes the software format.
+AVPixelFormat pick_pixel_format(const HwDevice* device, const AVPixelFormat* formats, bool allow_gpu)
 {
-  for (const AVPixelFormat* p = formats; *p != AV_PIX_FMT_NONE; p++) {
+  for (const AVPixelFormat* p = formats; allow_gpu && *p != AV_PIX_FMT_NONE; p++) {
     if (*p == device->hw_pix_fmt) {
       return *p;
     }
@@ -119,7 +120,27 @@ AVPixelFormat pick_pixel_format(const HwDevice* device, const AVPixelFormat* for
 AVPixelFormat choose_pixel_format(AVCodecContext* ctx, const AVPixelFormat* formats)
 {
   const auto* device = static_cast<const HwDevice*>(ctx->opaque);
-  AVPixelFormat chosen = pick_pixel_format(device, formats);
+
+  // NVIDIA's VDPAU returns wrong pictures, without reporting an error, for two kinds of HEVC stream,
+  // which are decoded in software instead. Measured with NVIDIA drivers 595.99.02 and 615.71.09,
+  // against CUDA, Intel's VAAPI driver and FFmpeg's software decoder, which agree with each other:
+  //  - 4:4:4 at 10 or 12 bits: copying the decoded frames out (VdpVideoSurfaceGetBitsYCbCr in
+  //    VDP_YCBCR_FORMAT_Y_U_V_444_16, the only format VDPAU offers for 16-bit 4:4:4 surfaces) returns
+  //    the Cb and Cr planes partly overwritten with each other and with unrelated values; the Y plane
+  //    is correct. 4:4:4 at 8 bits and 4:2:0 at 8, 10 and 12 bits come out correct.
+  //  - pictures 64 pixels wide or narrower, at any height and bit depth: part of the luma and chroma is
+  //    wrong (a 64x96 picture had 6521 wrong samples). From 65 pixels, which HEVC codes as 72, the
+  //    pictures are correct.
+  const bool vdpau = device->type == AV_HWDEVICE_TYPE_VDPAU;
+  const bool vdpau_444_16 = vdpau && (ctx->sw_pix_fmt == AV_PIX_FMT_YUV444P10 || ctx->sw_pix_fmt == AV_PIX_FMT_YUV444P12);
+  const bool vdpau_narrow = vdpau && ctx->width <= 64;
+  AVPixelFormat chosen = pick_pixel_format(device, formats, !vdpau_444_16 && !vdpau_narrow);
+  if (vdpau_444_16) {
+    hwdec::debug_log("get_format: VDPAU copies 4:4:4 10/12-bit frames out with wrong chroma, decoding in software");
+  }
+  if (vdpau_narrow) {
+    hwdec::debug_log("get_format: VDPAU decodes pictures %d pixels wide wrongly, decoding in software", ctx->width);
+  }
 
   // FFmpeg's hevc decoder labels full-range 8-bit 4:2:0 streams yuvj420p, an old pixel format that
   // only differs from yuv420p in its range flag. Most hwaccels ask for an nv12 GPU frame pool

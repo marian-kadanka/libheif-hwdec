@@ -309,7 +309,7 @@ HwDevice* open_device()
     device_env = nullptr;
   }
 
-  for (const std::string& name : split_list(backend_env && *backend_env ? backend_env : "vaapi,cuda")) {
+  for (const std::string& name : split_list(backend_env && *backend_env ? backend_env : "vaapi,vdpau,cuda")) {
     AVHWDeviceType type = av_hwdevice_find_type_by_name(name.c_str());
     if (type == AV_HWDEVICE_TYPE_NONE) {
       debug_log("backend \"%s\" is not known to this FFmpeg build", name.c_str());

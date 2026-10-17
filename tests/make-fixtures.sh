@@ -85,8 +85,8 @@ enc large-16896x256 large2.png
 convert -size 160x152 -seed 11 plasma:orange-purple -depth 16 profile16.png
 
 x265_enc() {
-  local name=$1 pix_fmt=$2 profile=$3
-  ffmpeg -v error -y -loop 1 -i profile16.png -frames:v 2 -pix_fmt "$pix_fmt" -strict -1 \
+  local name=$1 pix_fmt=$2 profile=$3 source=${4:-profile16.png}
+  ffmpeg -v error -y -loop 1 -i "$source" -frames:v 2 -pix_fmt "$pix_fmt" -strict -1 \
     -f yuv4mpegpipe "$name.y4m"
   x265 --log-level error --no-progress --input "$name.y4m" --y4m --profile "$profile" --crf 24 --output "$name.hevc"
   rm -f "$data_dir/$name.heic"
@@ -101,6 +101,11 @@ x265_enc main422-12 yuv422p12le main422-12
 x265_enc main444-8 yuv444p main444-8
 x265_enc main444-10 yuv444p10le main444-10
 x265_enc main444-12 yuv444p12le main444-12
+
+# A picture 64 pixels wide, which NVIDIA's VDPAU decodes wrongly, so the plugin has to decode it in
+# software on that backend; through VAAPI it is decoded on the GPU.
+convert -size 64x152 -seed 13 plasma:teal-pink -depth 16 narrow16.png
+x265_enc narrow-64x152 yuv420p main narrow16.png
 
 # AVIF (AV1) images, encoded by libheif's aom plugin. The GPUs decode AV1 Main profile (4:2:0 and
 # monochrome, 8 or 10 bits); 4:4:4 is High profile and decodes in software.
