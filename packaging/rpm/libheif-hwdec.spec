@@ -4,7 +4,7 @@
 #   rpmbuild -ba packaging/rpm/libheif-hwdec.spec   with the release tarball in SOURCES
 
 Name:           libheif-hwdec
-Version:        0.1.1
+Version:        1.0.0
 Release:        1%{?dist}
 Summary:        GPU-accelerated HEVC and AV1 decoder plugin for libheif
 License:        LGPL-3.0-or-later
@@ -79,6 +79,17 @@ find %{buildroot} -name libheif-hwdec.so | sed 's|^%{buildroot}||' > plugin.file
 %doc README.md
 
 %changelog
+* Sun Oct 18 2026 Marian Kadanka <marian@kadanka.net> - 1.0.0-1
+- Add a VDPAU backend, tried after VAAPI and before CUDA: on NVIDIA GPUs it
+  sets up in about 20 ms, against about 105 ms for CUDA. HEVC 4:4:4 at 10 or
+  12 bits and pictures 64 pixels wide or narrower are decoded in software on
+  it, because NVIDIA's VDPAU returns them wrong
+- Create the Vulkan device in the plugin, with one queue each for compute,
+  transfers and decoding: setting up an NVIDIA GPU takes about 120 ms instead
+  of up to 800 ms
+- Try Vulkan after the other backends with FFmpeg 8.1 or later, when the
+  machine has a GPU device node
+
 * Sat Oct 17 2026 Marian Kadanka <marian@kadanka.net> - 0.1.1-1
 - Decode in software when the GPU hands back a frame in a format too narrow
   for the stream, as nvidia-vaapi-driver does with 10- and 12-bit 4:4:4

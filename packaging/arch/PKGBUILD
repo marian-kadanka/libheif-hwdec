@@ -2,7 +2,7 @@
 #   makepkg -si      in this directory, builds from the GitHub release tarball
 
 pkgname=libheif-hwdec
-pkgver=0.1.1
+pkgver=1.0.0
 pkgrel=1
 pkgdesc='GPU-accelerated HEVC and AV1 decoder plugin for libheif'
 arch=('x86_64')

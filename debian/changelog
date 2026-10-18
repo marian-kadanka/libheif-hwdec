@@ -1,3 +1,17 @@
+libheif-hwdec (1.0.0-1) UNRELEASED; urgency=medium
+
+  * Add a VDPAU backend, tried after VAAPI and before CUDA: on NVIDIA GPUs it
+    sets up in about 20 ms, against about 105 ms for CUDA. HEVC 4:4:4 at 10 or
+    12 bits and pictures 64 pixels wide or narrower are decoded in software on
+    it, because NVIDIA's VDPAU returns them wrong.
+  * Create the Vulkan device in the plugin, with one queue each for compute,
+    transfers and decoding: setting up an NVIDIA GPU takes about 120 ms instead
+    of up to 800 ms.
+  * Try Vulkan after the other backends with FFmpeg 8.1 or later, when the
+    machine has a GPU device node.
+
+ -- Marian Kadanka <marian@kadanka.net>  Sun, 18 Oct 2026 12:54:09 +0200
+
 libheif-hwdec (0.1.1-1) UNRELEASED; urgency=medium
 
   * Decode in software when the GPU hands back a frame in a format too narrow
