@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -218,7 +219,9 @@ bool open_vaapi(const char* requested_device, HwDevice& out)
 //                                 the per-type fields (queue_family_comp_index, nb_comp_queues,
 //                                 ...) are deprecated and removed in libavutil 61 (FFmpeg 9.0).
 //   libavutil 60.20 (FFmpeg 8.1)  av_vk_get_optional_device_extensions() lists the device
-//                                 extensions FFmpeg can use.
+//                                 extensions FFmpeg can use. The plugin looks it up at run time,
+//                                 see ffmpeg_extension_list(): openSUSE's build-only ffmpeg-8-mini
+//                                 8.1.3 reports libavutil 60.26 but leaves it out.
 //   libavutil 60.32 (FFmpeg 9.0)  AVVulkanDeviceContext.queue_flags holds the flags the queues were
 //                                 created with.
 #define HWDEC_OWN_VULKAN_DEVICE (LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(58, 29, 100))
@@ -228,7 +231,6 @@ bool open_vaapi(const char* requested_device, HwDevice& out)
 #else
 #define HWDEC_VK_FIXED_QUEUES 0
 #endif
-#define HWDEC_VK_EXTENSION_LIST (LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(60, 20, 100))
 #define HWDEC_VK_QUEUE_FLAGS (LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(60, 32, 100))
 
 #if !HWDEC_OWN_VULKAN_DEVICE
@@ -341,11 +343,10 @@ struct OwnVulkan
   std::vector<const char*> extensions;
 };
 
-#if !HWDEC_VK_EXTENSION_LIST
-// Before av_vk_get_optional_device_extensions(): the device extensions FFmpeg 6.1 to 8.0 enable
-// when the device supports them (optional_device_exts in libavutil/hwcontext_vulkan.c), together.
-// An extension a given version does not know is enabled but left unused by it. VK_NV_optical_flow,
-// which FFmpeg 7.1 lists for its filters, is left out.
+// Where the loaded libavutil has no av_vk_get_optional_device_extensions(): the device extensions
+// FFmpeg 6.1 to 9.0 enable when the device supports them (optional_device_exts in
+// libavutil/hwcontext_vulkan.c), together. An extension a given version does not know is enabled
+// but left unused by it. VK_NV_optical_flow, which FFmpeg 7.1 lists for its filters, is left out.
 const char* const ffmpeg_device_extensions[] = {
   "VK_KHR_portability_subset",
   "VK_KHR_push_descriptor",
@@ -375,8 +376,44 @@ const char* const ffmpeg_device_extensions[] = {
   "VK_KHR_video_encode_av1",
   "VK_KHR_video_decode_av1",
   "VK_MESA_video_decode_av1",
+  "VK_EXT_host_image_copy",
+  "VK_KHR_workgroup_memory_explicit_layout",
+  "VK_KHR_shader_relaxed_extended_instruction",
+  "VK_EXT_shader_long_vector",
+  "VK_EXT_shader_replicated_composites",
+  "VK_EXT_zero_initialize_device_memory",
+  "VK_KHR_internally_synchronized_queues",
 };
-#endif
+
+// The device extensions FFmpeg can use: its own list from av_vk_get_optional_device_extensions()
+// where the libavutil this process loaded has that function, else ffmpeg_device_extensions. The
+// function is looked up instead of called, so the plugin also builds and loads with a libavutil
+// whose headers declare it but whose library lacks it.
+std::vector<const char*> ffmpeg_extension_list()
+{
+  using ListFn = const char** (*)(int*);
+  ListFn list_fn = nullptr;
+  Dl_info info{};
+  if (dladdr(reinterpret_cast<void*>(&av_hwdevice_ctx_alloc), &info) && info.dli_fname) {
+    if (void* avutil = dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD)) {
+      list_fn = reinterpret_cast<ListFn>(dlsym(avutil, "av_vk_get_optional_device_extensions"));
+      dlclose(avutil);  // only drops the reference RTLD_NOLOAD took; libavutil stays loaded
+    }
+  }
+  std::vector<const char*> names;
+  if (list_fn) {
+    int n = 0;
+    if (const char** list = list_fn(&n)) {
+      names.assign(list, list + n);  // the names themselves are FFmpeg's constants
+      av_free(list);
+      debug_log("vulkan: using FFmpeg's list of %d optional device extensions", n);
+      return names;
+    }
+  }
+  debug_log("vulkan: libavutil has no av_vk_get_optional_device_extensions(), using the plugin's list");
+  names.assign(std::begin(ffmpeg_device_extensions), std::end(ffmpeg_device_extensions));
+  return names;
+}
 
 // A zeroed Vulkan structure of type T with its sType and pNext set.
 template <typename T>
@@ -720,16 +757,7 @@ AVBufferRef* create_own_vulkan(const char* requested_device, std::string& descri
   enumerate_extensions(chosen, nullptr, &n_ext, nullptr);
   std::vector<VkExtensionProperties> supported_ext(n_ext);
   enumerate_extensions(chosen, nullptr, &n_ext, supported_ext.data());
-#if HWDEC_VK_EXTENSION_LIST
-  int n_wanted = 0;
-  const char** wanted = av_vk_get_optional_device_extensions(&n_wanted);
-  if (!wanted) {
-    return fail("out of memory");
-  }
-#else
-  const char* const* wanted = ffmpeg_device_extensions;
-  const int n_wanted = int(sizeof(ffmpeg_device_extensions) / sizeof(ffmpeg_device_extensions[0]));
-#endif
+  const std::vector<const char*> wanted = ffmpeg_extension_list();
   // FFmpeg enables VK_EXT_host_image_copy only when the whole of the largest device-local memory
   // heap is also visible to the CPU (resizable BAR; vulkan_device_has_rebar(), with its 1 kB
   // tolerance).
@@ -746,25 +774,22 @@ AVBufferRef* create_own_vulkan(const char* requested_device, std::string& descri
     }
   }
   const bool rebar = max_vram - max_visible_vram < 1024;
-  for (int i = 0; i < n_wanted; i++) {
-    if (!rebar && !strcmp(wanted[i], "VK_EXT_host_image_copy")) {
+  for (const char* name : wanted) {
+    if (!rebar && !strcmp(name, "VK_EXT_host_image_copy")) {
       continue;
     }
     // Queues of a device with this extension are created internally synchronized, and FFmpeg can
     // only fetch them as such where it has AVVulkanDeviceContext.queue_flags.
-    if (!HWDEC_VK_QUEUE_FLAGS && !strcmp(wanted[i], "VK_KHR_internally_synchronized_queues")) {
+    if (!HWDEC_VK_QUEUE_FLAGS && !strcmp(name, "VK_KHR_internally_synchronized_queues")) {
       continue;
     }
     for (const auto& e : supported_ext) {
-      if (!strcmp(e.extensionName, wanted[i])) {
-        o.extensions.push_back(wanted[i]);
+      if (!strcmp(e.extensionName, name)) {
+        o.extensions.push_back(name);
         break;
       }
     }
   }
-#if HWDEC_VK_EXTENSION_LIST
-  av_free(wanted);  // the names themselves are FFmpeg's constants
-#endif
 
   // Device features: what FFmpeg enables when the device supports it. Timeline semaphores are the
   // one feature FFmpeg cannot work without.
