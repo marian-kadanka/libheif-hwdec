@@ -19,8 +19,8 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec>=59.37 libavutil>=57.28)
 pkg_check_modules(LIBVA IMPORTED_TARGET libva)
-# Only the headers: FFmpeg's hwcontext_vulkan.h needs them, and the plugin calls Vulkan through
-# the function loader FFmpeg hands out.
+# Only the headers: FFmpeg's hwcontext_vulkan.h needs them, and the plugin loads libvulkan.so.1
+# itself at run time to create its Vulkan device (src/hw_device.cc), with FFmpeg 6.1 and later.
 pkg_check_modules(VULKAN vulkan)
 
 # Which plugin API the libheif headers offer. libheif 1.21 and later refuse plugins older than API

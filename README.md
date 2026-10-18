@@ -12,7 +12,7 @@ KDE's Qt image format plugins (`kimageformats`), such as Gwenview.
 | `vaapi`  | Intel and AMD (Mesa), NVIDIA with [nvidia-vaapi-driver](https://github.com/elFarto/nvidia-vaapi-driver) 0.0.14 or later (see [Configuration](#configuration)) |
 | `vdpau`  | NVIDIA, under X11 or XWayland                                                        |
 | `cuda`   | NVIDIA, through NVDEC                                                                |
-| `vulkan` | any GPU whose Vulkan driver exposes video decoding (opt-in, see [Configuration](#configuration)) |
+| `vulkan` | any GPU whose Vulkan driver exposes video decoding; tried last, with FFmpeg 8.1 or later (see [Configuration](#configuration)) |
 
 ## How it works
 
@@ -53,8 +53,8 @@ that version, which also decides the libheif releases the binary works with:
 | 1.21                  | 5          | 1.21 and later     | `>= 1.21`                              |
 | 1.22 and later        | 6          | 1.22 and later     | `>= 1.22`                              |
 
-Tested with libheif 1.17.6, 1.19.8, 1.20.2, 1.21.2, 1.22.2 and 1.23.6, and FFmpeg 6.1, 7.1, 8.0,
-8.1 and 9.0. The plugin links FFmpeg by its library versions (`libavcodec.so.60` for FFmpeg 6,
+Tested with libheif 1.17.6, 1.19.8, 1.20.2, 1.21.2, 1.22.2 and 1.23.6, and FFmpeg 6.1, 7.0, 7.1,
+8.0, 8.1 and 9.0. The plugin links FFmpeg by its library versions (`libavcodec.so.60` for FFmpeg 6,
 `.62` for 8 and so on), so a binary also belongs to one FFmpeg major version.
 
 ## Pre-built packages
@@ -116,7 +116,7 @@ in a container of the distribution.
 - FFmpeg (`libavcodec`, `libavutil`) with the `hevc` decoder, and for AVIF with the `av1` decoder
   and `libdav1d` or `libaom-av1`
 - libva for the `vaapi` backend, the Vulkan headers to build the `vulkan` backend's device
-  selection
+  creation
 - A GPU driver that decodes HEVC, see [Distribution notes](#distribution-notes)
 
 ## Building
@@ -187,7 +187,7 @@ Environment variables, read once per process:
 | variable                | effect                                                                   |
 |-------------------------|--------------------------------------------------------------------------|
 | `LIBHEIF_HWDEC=0`       | disable the plugin; libheif uses its regular decoders                    |
-| `LIBHEIF_HWDEC_BACKEND` | comma-separated backends to try in order: `vaapi`, `vdpau`, `cuda`, `vulkan`; default `vaapi,vdpau,cuda` |
+| `LIBHEIF_HWDEC_BACKEND` | comma-separated backends to try in order: `vaapi`, `vdpau`, `cuda`, `vulkan`; default `vaapi,vdpau,cuda`, and `vaapi,vdpau,cuda,vulkan` with FFmpeg 8.1 or later on a machine with a GPU device node (`/dev/dri/renderD*` or `/dev/nvidia0`) |
 | `LIBHEIF_HWDEC_DEVICE`  | DRM render node for `vaapi` (`/dev/dri/renderD129`), device index for `cuda` and `vulkan` |
 | `LIBHEIF_HWDEC_DEBUG=1` | log, with the process ID, the chosen device, the AV1 probe, each picture's path (GPU or CPU), format and timings, and FFmpeg's errors |
 
@@ -203,45 +203,51 @@ Without `LIBHEIF_HWDEC_DEVICE`:
   decodes as fast as the `cuda` backend from the second image in a process, but the first image
   takes about 170 ms longer, because the driver's own setup is slower. Where both are available,
   `LIBHEIF_HWDEC_BACKEND=vdpau,cuda` is the better choice for NVIDIA GPUs.
-- `vdpau` comes before `cuda` because it sets up in about 20 ms, against 110–215 ms for CUDA,
-  measured on an NVIDIA T1200: a process that opens one photo finishes about 145 ms sooner. From
-  the second image in a process it is a few percent slower than `cuda`, because copying the
-  decoded frames out of VDPAU takes longer. It needs an X display (X11 or XWayland, through
-  `DISPLAY`); without one the plugin moves on to `cuda`. NVIDIA's VDPAU does not decode the HEVC
-  Main Still Picture profile, which libheif's own encoder writes for 8-bit images, so those
-  images are decoded in software; `LIBHEIF_HWDEC_BACKEND=cuda` decodes them on the GPU. VDPAU
-  also returns wrong pictures, without reporting an error, for HEVC 4:4:4 at 10 or 12 bits (the
-  colour planes) and for pictures 64 pixels wide or narrower, measured with NVIDIA drivers
+- `vdpau` comes before `cuda` because it sets up in about 20 ms, against about 105 ms for CUDA,
+  measured on an NVIDIA T1200: a process that opens one photo finishes about 150 ms sooner, and from
+  the second image on both decode as fast (see [Performance](#performance)). It needs an X display
+  (X11 or XWayland, through `DISPLAY`); without one the plugin moves on to `cuda`. NVIDIA's VDPAU
+  does not decode the HEVC Main Still Picture profile, which libheif's own encoder writes for 8-bit
+  images, so those images are decoded in software; `LIBHEIF_HWDEC_BACKEND=cuda` decodes them on the
+  GPU. VDPAU also returns wrong pictures, without reporting an error, for HEVC 4:4:4 at 10 or 12
+  bits (the colour planes) and for pictures 64 pixels wide or narrower, measured with NVIDIA drivers
   595.99.02 and 615.71.09; the plugin decodes both in software on this backend.
-- `vulkan` takes the first Vulkan device with an H.265 video decode queue. It is not in the default
-  list because setting it up took 700–850 ms on an NVIDIA T1200, against 3 ms for VAAPI on an Intel
-  GPU. Mesa's Intel driver (ANV) exposes video decoding only with `ANV_DEBUG=video-decode`, at least
-  up to Mesa 26.2.
+- `vulkan` takes the first Vulkan device with an H.265 video decode queue. With FFmpeg 6.1 and later
+  the plugin creates that device itself, with one queue each for compute, transfers and decoding,
+  and the extensions and features FFmpeg enables, then hands it to FFmpeg: FFmpeg's own device setup
+  asks for every queue the driver offers, and on an NVIDIA T1200 took 570–800 ms with FFmpeg 6.1,
+  about 270 ms with 8.0 and about 190 ms with 8.1 even with its `limit_queues=1` option, against
+  about 120 ms for the plugin's. The backend is in the default list only with FFmpeg 8.1 or later:
+  with 6.1 to 8.0 it decoded about 37% slower than with 8.1 and 9.0, where it is as fast as `vdpau`
+  and `cuda`. Mesa's Intel driver (ANV) exposes video decoding only with `ANV_DEBUG=video-decode`,
+  at least up to Mesa 26.2.
 
 Applications can also choose the decoder per call: set `decoder_id = "hwdec"` (or `"libde265"`)
 in `heif_decoding_options`, or use `heif-dec -d hwdec`.
 
 ## What runs on the GPU
 
-Measured on an Intel Alder Lake-P iGPU (VAAPI) and an NVIDIA T1200 (VDPAU and NVDEC), using the
-files in `tests/data/`:
+Measured on an Intel Alder Lake-P iGPU (VAAPI) and an NVIDIA T1200 (VDPAU, NVDEC and Vulkan), using
+the files in `tests/data/`:
 
-| stream                                                     | Intel, VAAPI | NVIDIA, VDPAU | NVIDIA, CUDA |
-|------------------------------------------------------------|--------------|---------------|--------------|
-| HEVC 8-bit 4:2:0 Main                                      | GPU          | GPU           | GPU          |
-| HEVC 8-bit 4:2:0 Main Still Picture                        | GPU          | software      | GPU          |
-| HEVC 10/12-bit 4:2:0 (Main 10, Main 12)                    | GPU          | GPU           | GPU          |
-| HEVC 4:2:2 10/12-bit (Main 4:2:2 10/12)                    | GPU          | software      | software     |
-| HEVC 4:4:4 8-bit (Main 4:4:4)                              | GPU          | GPU           | GPU          |
-| HEVC 4:4:4 10/12-bit (Main 4:4:4 10/12)                    | GPU          | software      | GPU          |
-| HEVC 10/12-bit, 4:2:2 or 4:4:4 with a Range Extensions *Intra* profile | software | software | as above |
-| HEVC monochrome, including alpha planes                    | software     | software      | software     |
-| HEVC pictures 64 pixels wide or narrower                   | GPU          | software      | software     |
-| HEVC pictures under 144 pixels high                        | GPU          | GPU           | software     |
-| HEVC pictures over 8192 pixels wide or high                | GPU          | software      | software     |
-| HEVC pictures over 16384 pixels wide or high               | software     | software      | software     |
-| AV1 Main profile 4:2:0 8/10-bit (driver 26.1 or later)     | GPU          | not supported by the T1200 | not supported by the T1200 |
-| AV1 4:4:4 (High profile), AV1 monochrome                   | software     | —             | —            |
+| stream                                                     | Intel, VAAPI | NVIDIA, VDPAU | NVIDIA, CUDA | NVIDIA, Vulkan |
+|------------------------------------------------------------|--------------|---------------|--------------|----------------|
+| HEVC 8-bit 4:2:0 Main                                      | GPU          | GPU           | GPU          | GPU            |
+| HEVC 8-bit 4:2:0 Main Still Picture                        | GPU          | software      | GPU          | GPU            |
+| HEVC 10-bit 4:2:0 (Main 10)                                | GPU          | GPU           | GPU          | GPU            |
+| HEVC 12-bit 4:2:0 (Main 12)                                | GPU          | GPU           | GPU          | GPU with FFmpeg 6.1 and 7.0, software from 7.1 |
+| HEVC 4:2:2 10/12-bit (Main 4:2:2 10/12)                    | GPU          | software      | software     | software       |
+| HEVC 4:4:4 8-bit (Main 4:4:4)                              | GPU          | GPU           | GPU          | GPU            |
+| HEVC 4:4:4 10-bit (Main 4:4:4 10)                          | GPU          | software      | GPU          | GPU            |
+| HEVC 4:4:4 12-bit (Main 4:4:4 12)                          | GPU          | software      | GPU          | as Main 12     |
+| HEVC 10/12-bit, 4:2:2 or 4:4:4 with a Range Extensions *Intra* profile | software | software | as above | as above      |
+| HEVC monochrome, including alpha planes                    | software     | software      | software     | software       |
+| HEVC pictures 64 pixels wide or narrower                   | GPU          | software      | software     | software       |
+| HEVC pictures under 144 pixels high                        | GPU          | GPU           | software     | not measured   |
+| HEVC pictures over 8192 pixels wide or high                | GPU          | software      | software     | software       |
+| HEVC pictures over 16384 pixels wide or high               | software     | software      | software     | software       |
+| AV1 Main profile 4:2:0 8/10-bit (driver 26.1 or later)     | GPU          | not supported by the T1200 | not supported by the T1200 | not supported by the T1200 |
+| AV1 4:4:4 (High profile), AV1 monochrome                   | software     | —             | —            | —              |
 
 - **Intra profiles:** libheif's own x265 encoder (`heif-enc`) writes 10/12-bit, 4:2:2 and 4:4:4
   images with Range Extensions *Intra* profiles, which FFmpeg's VAAPI code has no mapping for.
@@ -251,21 +257,30 @@ files in `tests/data/`:
 
 ## Performance
 
-218 photos (217 of 9248×6936 in 70 tiles of 1024×1024, one of 2208×2944 in 30 tiles of 512×512),
-decoded one after another in one process with `heif-hwdec-bench` (no colour conversion), with NVIDIA
-driver 615.71.09:
+Measured on an Intel Alder Lake-P iGPU (VAAPI) and an NVIDIA T1200 with driver 615.71.09, with
+`heif-hwdec-bench` (no colour conversion) on photos of 9248×6936 in 70 tiles of 1024×1024. Every
+run is a fresh process started on an idle machine right after 500 ms of light rendering on the GPU
+it uses, as on a desktop whose GPU also drives the screen. Times with FFmpeg 9.0.2; software is
+libde265, libheif's regular HEVC decoder:
 
-| decoder                     | median per photo | total   |
-|-----------------------------|-----------------:|--------:|
-| libde265 (software)         | 687 ms           | 159.0 s |
-| hwdec, Intel iGPU (VAAPI)   | 337 ms           | 55.0 s  |
-| hwdec, NVIDIA T1200 (VDPAU) | 356 ms           | 66.1 s  |
-| hwdec, NVIDIA T1200 (CUDA)  | 346 ms           | 61.7 s  |
+| decoder                     | first photo in a new process, median of 10 | 75 photos, 5 processes of 15 | device setup |
+|-----------------------------|---------:|---------:|------:|
+| libde265 (software)         | 600 ms   | 66.0 s   | —      |
+| hwdec, Intel iGPU (VAAPI)   | 223 ms   | 23.8 s   | 3 ms   |
+| hwdec, NVIDIA T1200 (VDPAU) | 312 ms   | 27.2 s   | 19 ms  |
+| hwdec, NVIDIA T1200 (CUDA)  | 469 ms   | 27.6 s   | 106 ms |
+| hwdec, NVIDIA T1200 (Vulkan)| 416 ms   | 27.9 s   | 120 ms |
 
-Setting up the device, once per process, took 3–4 ms for VAAPI, 20–75 ms for VDPAU and 110–165 ms
-for CUDA. On a laptop that powers the NVIDIA GPU down while it is idle, waking it adds about
-1.2 s to the first image on either NVIDIA backend. Image viewers and KDE's thumbnail workers are
-long-running processes and pay this once; one-shot `heif-dec` runs pay it every time.
+With FFmpeg 7.0, 7.1, 8.0 and 8.1 the VAAPI, VDPAU and CUDA times are within 10% of these for the
+first photo and within 2% for the 75; with Ubuntu 24.04's FFmpeg 6.1 they are 5–13% longer. Vulkan
+takes 574–589 ms for the first photo and 37.8–38.1 s for the 75 with FFmpeg 6.1 to 8.0, and 461 ms
+and 27.8 s with 8.1.0.
+
+The device is set up once per process. Image viewers and KDE's thumbnail workers are long-running
+processes and pay it once; one-shot `heif-dec` runs pay it every time. An NVIDIA GPU that has been
+idle for a few seconds starts from its lowest power state, which made CUDA's setup about 60 ms
+longer; one that a laptop has powered down adds about 1.2 s to the first image on any NVIDIA
+backend.
 
 ## Testing
 

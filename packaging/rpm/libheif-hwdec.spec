@@ -49,9 +49,9 @@ Enhances:       %{libheif_package}
 %description
 Decodes HEIC (HEVC) and AVIF (AV1) images on the GPU through FFmpeg's hardware
 acceleration API, using VAAPI (Intel, AMD, and NVIDIA with its VAAPI driver),
-CUDA/NVDEC (NVIDIA) or Vulkan Video. Every program that reads HEIC or AVIF files
-through libheif uses it once the package is installed, including image viewers
-that use KDE's Qt image format plugins, such as Gwenview.
+VDPAU (NVIDIA), CUDA/NVDEC (NVIDIA) or Vulkan Video. Every program that reads
+HEIC or AVIF files through libheif uses it once the package is installed,
+including image viewers that use KDE's Qt image format plugins, such as Gwenview.
 
 When no suitable GPU is present the plugin steps aside and libheif keeps using
 its usual decoders. Streams the GPU cannot decode are decoded in software by

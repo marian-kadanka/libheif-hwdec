@@ -31,7 +31,8 @@ struct HwDevice
 // Environment:
 //   LIBHEIF_HWDEC=0            disable hardware decoding (also "off", "no", "false")
 //   LIBHEIF_HWDEC_BACKEND=...  comma-separated backends to try in order: vaapi, vdpau, cuda,
-//                              vulkan. Default "vaapi,vdpau,cuda".
+//                              vulkan. Default "vaapi,vdpau,cuda", plus ",vulkan" with FFmpeg 8.1
+//                              or later on a machine with a GPU device node.
 //   LIBHEIF_HWDEC_DEVICE=...   device to open: a DRM render node such as /dev/dri/renderD129 for
 //                              vaapi, a GPU index such as 1 for cuda and vulkan. Default for vaapi:
 //                              probe every /dev/dri/renderD* node, non-NVIDIA first, and take the
