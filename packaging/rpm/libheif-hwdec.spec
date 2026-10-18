@@ -4,7 +4,7 @@
 #   rpmbuild -ba packaging/rpm/libheif-hwdec.spec   with the release tarball in SOURCES
 
 Name:           libheif-hwdec
-Version:        1.0.0
+Version:        1.0.1
 Release:        1%{?dist}
 Summary:        GPU-accelerated HEVC and AV1 decoder plugin for libheif
 License:        LGPL-3.0-or-later
@@ -79,6 +79,12 @@ find %{buildroot} -name libheif-hwdec.so | sed 's|^%{buildroot}||' > plugin.file
 %doc README.md
 
 %changelog
+* Sun Oct 18 2026 Marian Kadanka <marian@kadanka.net> - 1.0.1-1
+- Fix the build against an FFmpeg whose libavutil reports version 8.1 but
+  lacks av_vk_get_optional_device_extensions(), such as openSUSE's minimal
+  FFmpeg 8: the Vulkan backend now looks the function up at run time and
+  otherwise uses its own list of the Vulkan extensions FFmpeg can use
+
 * Sun Oct 18 2026 Marian Kadanka <marian@kadanka.net> - 1.0.0-1
 - Add a VDPAU backend, tried after VAAPI and before CUDA: on NVIDIA GPUs it
   sets up in about 20 ms, against about 105 ms for CUDA. HEVC 4:4:4 at 10 or
